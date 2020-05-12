@@ -1,4 +1,3 @@
-
 ---
 title: "Accelerated Gammatones"
 date: 2020-05-12T14:37:01-05:00
