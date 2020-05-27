@@ -91,6 +91,3 @@ def make_erb_filters(fs, centre_fs, width=1.0):
     fcoefs = [a0 * allfilts, a11, a12, a13, a14, a2 * allfilts, b0 * allfilts, b1, b2, np.abs(gain.get())]
 
     return np.column_stack([x.get() if type(x) == cla.Array else x for x in fcoefs])
-
-def lfilter(b, a, x):
-
