@@ -1,5 +1,5 @@
 import gammatone.filters as oldfilt
-import gammatonecl.filters as newfilt
+import gammatone.filters as newfilt
 import pyopencl.array as cla
 import numpy as np
 import time
