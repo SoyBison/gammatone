@@ -1,93 +1,103 @@
-import numpy as np
-import pyopencl.array as cla
 import pyopencl as cl
+from pyopencl.elementwise import ElementwiseKernel
+import pyopencl.array as cla
 import pyopencl.clmath as clm
-
-DEFAULT_FILTER_NUM = 100
-DEFAULT_LOW_FREQ = 100
-DEFAULT_HIGH_FREQ = 44100 // 4
-
-EARQ = 9.26449
-MIN_BW = 24.7
-CORR = EARQ * MIN_BW
-ORDER = 1
+from pyopencl.elementwise import ElementwiseKernel
+import numpy as np
+import math
+import time
+import soundfile
+from matplotlib import pyplot as plt
+from tqdm import tqdm
+from pyopencl.scan import GenericScanKernel
 
 ctx = cl.create_some_context()
 q = cl.CommandQueue(ctx)
+M_PI = 3.14159265358979323846
+BW_CORRECTION = 1.0190
+
+q_maker = ElementwiseKernel(ctx,
+                            "double *qcos, double *qsin, double *t, double tpt, double cf",
+                            "qcos[i] = cos(tpt * cf * t[i]); qsin[i] = - sin(tpt * cf * t[i])"
+                            )
+
+p0 = GenericScanKernel(ctx, np.float64,
+                       arguments='double *x, double *y, double d',
+                       neutral='0',
+                       input_expr='x[i]',
+                       scan_expr='b*d',
+                       output_statement="""y[i] = item - d*d*prev_item"""
+                       )
+
+p1 = GenericScanKernel(ctx, np.float64,
+                       arguments='double *x, double d',
+                       neutral='0',
+                       input_expr='x[i]',
+                       scan_expr='b*d*d*d',
+                       output_statement="x[i]= item - d*d*d*d*prev_item")
+
+u0 = ElementwiseKernel(ctx,
+                       'double *p0, double *p1, double *p2, double *y, double d',
+                       'y[i] = p0[i] + 4.0 * d * p1[i] + d*d*p2[i]')
+
+bm_maker = ElementwiseKernel(ctx,
+                             'double *ur, double *ui, double *qcos, double *qsin, double *y, double g',
+                             'y[i] = (ur[i] * qcos[i] + ui[i] * qsin[i]) * g')
+
+shift = ElementwiseKernel(ctx,
+                          "double *x",
+                          "x[i] = x[i+1]")
 
 
-def erb_space(low_freq=DEFAULT_LOW_FREQ, high_freq=DEFAULT_HIGH_FREQ, num=DEFAULT_FILTER_NUM, __test=False, q=q):
-    """
-    Calculates a single point on an ERB scale in the defined frequency range, at the level defined.
-
-    :param num: Defines the r
-    :param low_freq: Defines the lower bound of the frequency range.
-    :param high_freq: Defines the upper bound of the frequency range.
-    :return: The ERB space between ``low_freq`` and ``high_freq`` at resolution defined by ``num``. If ``__test`` is
-    ```False```, returns an opencl array, ```True``` returns a numpy array.
-    """
-    fracs = cla.arange(q, 1, num+1, dtype=np.float32) / num
-
-    erb = - CORR + clm.exp(fracs * (np.log(low_freq + CORR) - np.log(high_freq + CORR))) * (high_freq + CORR)
-    return erb
+def erb(x):
+    return 24.7 * (4.37e-3 * x + 1.0)
 
 
-def centre_freqs(fs, num_freqs, cutoff, q=q):
-    """
-    Calculates the center frequencies from a sampling frequency, low end, and the number of filters you need.
-    A wrapper for :func: `erg_space`
-    :param fs: ``fs`` / 2 is passed to the high end of :func: `erg_space`
-    :param num_freqs: is passed to the :param: ``num`` of :func: `erg_space`
-    :param cutoff: is passed to the low end of :func: `erg_space`
-    :return: The erb space between ``cutoff`` and ``fs / 2`` with resolution ``num_freqs``
-    """
-    return erb_space(cutoff, fs // 2, num_freqs, q=q)
+def get_coefficients(signal, fs, cfs):
+    samp_g = cla.to_device(q, signal)
+    tpt = (M_PI + M_PI) / fs
+    ts_g = cla.arange(q, 0, len(signal))
+    coefficients = []
+    if type(cfs) != list:
+        cfs = [cfs]
+    for cf in cfs:
+        # Calculating the parameters for the given center frequencies
+        tptbw = tpt * erb ( cf ) * BW_CORRECTION
+        decay = np.exp(-tptbw)
+        gain = np.float64((tptbw ** 4) / 3)
+        # Setting up memory for everything.
+        qcos = cla.empty_like(ts_g)
+        qsin = cla.empty_like(ts_g)
+        bm_g = cla.empty_like(ts_g)
+        p0r_g = cla.empty_like(ts_g)
+        p0i_g = cla.empty_like(ts_g)
+        ur_g = cla.empty_like(ts_g)
+        ui_g = cla.empty_like(ts_g)
+        # Preparing the imaginary/real cyclical effects
+        q_maker(qcos, qsin, ts_g, tpt, cf)
+        cosx = samp_g * qcos
+        sinx = samp_g * qsin
+        # Performing the filtering operation
+        p0(cosx, p0r_g, decay)
+        p0(sinx, p0i_g, decay)
+        p1(p0r_g, decay)
+        p1(p0i_g, decay)
+        # Preparing the memory to calculate basilar membrane displacement.
+        p1r_g = p0r_g.copy(q)
+        shift(p1r_g)
+        p2r_g = p1r_g.copy(q)
+        shift(p2r_g)
+        p1i_g = p0i_g.copy(q)
+        shift(p1i_g)
+        p2i_g = p1i_g.copy(q)
+        shift(p2i_g)
+        # Calculating Basilar Membrane displacement
+        u0(p0r_g, p1r_g, p2r_g, ur_g, decay)
+        u0(p0i_g, p1i_g, p2i_g, ui_g, decay)
+        bm_maker(ur_g, ui_g, qcos, qsin, bm_g, gain)
+        # Append to the list
+        cl_x = (bm_g**2).get()
+        coefficients.append(cl_x)
 
+    return np.row_stack(coefficients)
 
-def make_erb_filters(fs, centre_fs, width=1.0):
-    t = 1 / fs
-
-    erb = width * ((centre_fs / EARQ) ** ORDER + MIN_BW ** ORDER) ** (1 / ORDER)
-
-    b = 1.019 * 2 * np.pi * erb
-    arg = 2 * centre_fs * np.pi * t
-    vec = clm.exp(np.complex(0, 2) * arg)
-    btex = clm.exp(b * t)
-
-    a0 = t
-    a2 = 0
-    b0 = 1
-    b1 = -2 * clm.cos(arg) / btex
-    b2 = clm.exp(-2 * b * t)
-
-    rp = np.sqrt(3 + 2 ** 1.5)
-    rn = np.sqrt(3 - 2 ** 1.5)
-
-    common = -t / btex
-
-    cosarg = clm.cos(arg)
-    sinarg = clm.sin(arg)
-
-    k1 = cosarg + rp * sinarg
-    k2 = cosarg - rp * sinarg
-    k3 = cosarg + rn * sinarg
-    k4 = cosarg - rn * sinarg
-
-    a11 = common * k1
-    a12 = common * k2
-    a13 = common * k3
-    a14 = common * k4
-
-    gain_arg = clm.exp(np.complex(0, 1) * arg - b * t)
-
-    gain = (vec - gain_arg * k1) * \
-           (vec - gain_arg * k2) * \
-           (vec - gain_arg * k3) * \
-           (vec - gain_arg * k4) * \
-           (t * btex / (-1 / btex + 1 + vec * (1 - btex))) ** 4
-
-    allfilts = cla.zeros_like(centre_fs) + 1
-
-    fcoefs = [a0 * allfilts, a11, a12, a13, a14, a2 * allfilts, b0 * allfilts, b1, b2, np.abs(gain.get())]
-
-    return np.column_stack([x.get() if type(x) == cla.Array else x for x in fcoefs])
