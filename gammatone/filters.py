@@ -1,3 +1,9 @@
+"""
+This module contains the filtering logic. For more information see
+ https://staffwww.dcs.shef.ac.uk/people/N.Ma/resources/gammatone/. His implementation is 4th order and mine is just
+ first.
+"""
+
 import pyopencl as cl
 from pyopencl.elementwise import ElementwiseKernel
 import pyopencl.array as cla
@@ -46,18 +52,23 @@ shift = ElementwiseKernel(ctx,
                           "x[i] = x[i+1]")
 
 
-def normalize(v):
-    norm = np.linalg.norm(v)
-    if norm == 0:
-        return v
-    return v / norm
-
-
 def erb(x):
+    """
+    An alias for the erb function. It's a simple math function with parameters that characterize the ear and cochlea.
+    :param x: Input Frequency
+    :return: Adjusted frequency
+    """
     return GM_PARAMETER * (EAR_CORRECTION * x + 1.0)
 
 
 def get_coefficients(signal, fs, cfs):
+    """
+    Executes all of the gammatone logic. Iterates over each input central frequency and executes the filter in OpenCL.
+    :param np.array signal: input signal
+    :param int fs: sampling frequency.
+    :param iter cfs: Some iterator of central frequencies you'd like to filter the wave by.
+    :return:
+    """
     samp_g = cla.to_device(q, signal)
     tpt = np.float64((M_PI + M_PI) / fs)
     ts_g = cla.arange(q, 0, len(signal), dtype=np.float64)
@@ -104,6 +115,13 @@ def get_coefficients(signal, fs, cfs):
 
 
 def erb_space(top, bottom, number):
+    """
+    Creates a set of frequencies along an erb-response function (NOTE: Not the same thing as :erb():) , given a top end and a bottom end.
+    :param top: The top end of your sample, should be the sampling frequency / 2.
+    :param bottom: The bottom end of the spectrum. Somewhere around 20-50 Hz
+    :param number: The number of frequencies you want to be output.
+    :return: A set of frequencies along the erb-response function.
+    """
     frac_space = np.arange(1, number + 1) / number
     points = -1 / EAR_CORRECTION + np.exp(frac_space * (np.log(bottom + 1 / EAR_CORRECTION) -
                                                         np.log(top + 1 / EAR_CORRECTION))
@@ -111,5 +129,9 @@ def erb_space(top, bottom, number):
     return points
 
 
-def center_freqs(samplerate, number, bottom):
+def center_freqs(samplerate, bottom, number):
+    """
+    A wrapper for :erb_space(): that automatically calculates good center frequencies given a sampling frequency and a
+    low end. For parameters see :erb_space():.
+    """
     return erb_space(samplerate / 2, bottom, number)
