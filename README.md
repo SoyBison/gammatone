@@ -1,20 +1,63 @@
 ---
 title: "Accelerated Gammatones"
+author: Coen D. Needell
 date: 2020-05-12T14:37:01-05:00
 draft: false
+math: true
 ---
 
-Last winter, I worked on a personal project I call [_ongaku_](https://www.coeneedell.com/projects/ongaku/) (from the Japanese for 'music'). This was an attempt to use manifold learning to create a metric space for music. The preprocessing relied heavily on a method called [_Gammatone Cepstrum Analysis_](https://ieeexplore.ieee.org/document/6202347). This method was intended to replace Mel Frequency Cepstral Coefficients. Where Mel Frequency is a logarithmic transformation of sound frequency, in an attempt to simulate human perception of sound. The most common transformation for Mels is:
-
-$$
+<body>
+<header id="title-block-header">
+<h1 class="title">Accelerated Gammatones</h1>
+<p class="author">Coen D. Needell</p>
+<p class="date">2020-05-12T14:37:01-05:00</p>
+</header>
+<p>Last winter, I worked on a personal project I call <a href="https://www.coeneedell.com/projects/ongaku/"><em>ongaku</em></a> (from the Japanese for ‘music’). This was an attempt to use manifold learning to create a metric space for music. The preprocessing relied heavily on a method called <span class="citation" data-cites="valeroGammatone2012">(Valero and Alias 2012)</span>. This method was intended to replace Mel Frequency Cepstral Coefficients. Where Mel Frequency is a logarithmic transformation of sound frequency, in an attempt to simulate human perception of sound. The most common transformation for Mels is:</p>
+<p><span class="math display">\[
 m = 2595 \log_{10}{1 + \frac{f}{700}}
-$$
-
-This simple approach works very well, but it has its basis in human _perception_ which is a tricky thing. There's no reason to believe that the brain makes judgments based on human perception. It's very possible that the brain takes in data, and produces two perceptions, one of the sound itself, and the other as the semiotic interpretation of that sound. Enter the Gammatone Cepstral Coefficients. This is a simplification of the process that sound signals undergo when being transferred through the cochlear nerve, the nerve that transfers data between the ear and the brain. So the theory goes, this will allow a machine learning algorithm to work with data that better simulates how the brain receives sound signals, rather than how the mind perceives them. Research has shown that GFCCs outperform MFCCs in machine learning tasks. [(Liu 2018)](https://arxiv.org/abs/1806.09010) The gammatone transformation looks like:
-
-$$
+\]</span></p>
+<p>This simple approach works very well, but it has its basis in human <em>perception</em> which is a tricky thing. There’s no reason to believe that the brain makes judgments based on human perception. It’s very possible that the brain takes in data, and produces two perceptions, one of the sound itself, and the other as the semiotic interpretation of that sound. Enter the Gammatone Cepstral Coefficients. This is a simplification of the process that sound signals undergo when being transferred through the cochlear nerve, the nerve that transfers data between the ear and the brain. So the theory goes, this will allow a machine learning algorithm to work with data that better simulates how the brain receives sound signals, rather than how the mind perceives them. Research has shown that GFCCs outperform MFCCs in machine learning tasks <span class="citation" data-cites="liuEvaluating2018">(Liu 2018)</span>. The gammatone transformation looks like:</p>
+<p><span class="math display">\[
 g_q(t) = t^4 e^{-54 \pi t + j 20 \pi t}u(t)
-$$
-
-I have been able to find an [implementation](https://github.com/detly/gammatone) of the gammatone transformation in python, but it's slow, and is a port of a MATLAB plugin. This package is intended to mimic that package's structure, but instead working natively in OpenCL for speed. This is problematic for a number of reasons. First, the MATLAB plugin has been shown to be inefficiently implemented. [(Ma n.d.)](https://staffwww.dcs.shef.ac.uk/people/N.Ma/resources/gammatone/). Secondly, for my purposes, gammatones need to be processed on long files, 2-10 minutes in length, and even Dr. Ma's implementation runs serially. As such, I believe that an inherently parallel version of this would be a benefit, not only to me, but to the scientific computing community at large. As such, this project will be released on pypi as `gammatone`. There does exist a github project called `gammatone` which is the implementation that ongaku currently uses, but it is not avaliable on pypi at the time of writing, so there will be no conflicts in the long run. Ideally this project will end up somewhere between Ma's implementation and detly's implementation.
-
+\]</span></p>
+<p>I have been able to find an <a href="https://github.com/detly/gammatone">implementation</a> of the gammatone transformation in python, but it’s slow, and is a port of a MATLAB plugin. This package is intended to mimic that package’s structure, but instead working natively in OpenCL for speed. This is problematic for a number of reasons. First, the MATLAB plugin has been shown to be inefficiently implemented <span class="citation" data-cites="maEfficient">(Ma, n.d.a)</span> <span class="citation" data-cites="maCochleagram">(Ma, n.d.b)</span>. Secondly, for my purposes, gammatones need to be processed on long files, 2-10 minutes in length, and even Dr. Ma’s implementation runs serially. As such, I believe that an inherently parallel version of this would be a benefit, not only to me, but to the scientific computing community at large. As such, this project will be released on pypi as <code>gammatone</code>. There does exist a github project called <code>gammatone</code> which is the implementation that ongaku currently uses, but it is not avaliable on pypi at the time of writing, so there will be no conflicts in the long run.</p>
+<p>The available implementations of gammatone filters are serial. However, there have been a number of attempts to parallelize IIR (Infinite Impulse Response) filters in the past<span class="citation" data-cites="anwarDigital">(Anwar and Sung, n.d.)</span> <span class="citation" data-cites="bellochMultichannel2014">(Belloch et al. 2014)</span>. The general consensus is that this is rarely better than a serial implementation, and the implementation of a new filter needs to be made bespoke for that filter. After analyzing the implementation methods, I decided that (for now,) this is beyond the scope of this project. The fourth order gammatone filter is implemented like:</p>
+<p><span class="math display">\[
+erb(x) = 24.7 * (4.37 \times 10^{-3} + 1) \\
+\delta = e^{\frac{2 \pi}{f} erb(f_c) \times 1.019} \\
+q_t = \cos{\frac{2 \pi}{f} f_c} + i\sin{\frac{2 \pi}{f} f_c} \\
+g = \frac{\left(\frac{2 \pi}{cf} erb(f_c) \times 1.019\right)^4}{3} \\
+y_{t} =  q_t x_t + 4 \delta y_{t-1} - 6 \delta^2 y_{t-2} + 4 \delta^3 y_{t-3} - \delta^4 y_{t-4}\\
+\]</span></p>
+<p>Where <span class="math inline">\(f\)</span> is the sampling frequency of the signal, and <span class="math inline">\(f_c\)</span> is the target frequency to test membrane resonance against. The basilar membrane displacement (<span class="math inline">\(B_t\)</span>) and Hilbert envelope (<span class="math inline">\(H_i\)</span>) are defined with simple transformations. The cochleagram uses the Hilbert envelope to construct an image.</p>
+<p><span class="math display">\[
+B_t = g y_t q_t \\
+H_t = g \sqrt{y_t^2}
+\]</span></p>
+<p>Another option is to use a prefix sum <span class="citation" data-cites="blellochPrefix">(Blelloch, n.d.)</span>. The problem with this is that while a single prefix sum can be exact to the first order of a filter, most implementations of gammatone cochleagrams use a fourth order filter. However, most implementations are made for medical applications, and I am a social scientist. Implementing a first order gammatone filter can, unlike higher order filters, can be reduced to a one-dimensional prefix sum operation <span class="citation" data-cites="blellochPrefix">(Blelloch, n.d.)</span>.</p>
+<h1 id="references" class="unnumbered">References</h1>
+<div id="refs" class="references">
+<div id="ref-anwarDigital">
+<p>Anwar, Sajid, and Wonyong Sung. n.d. “Digital Signal Processing Filtering with GPU,” 2.</p>
+</div>
+<div id="ref-bellochMultichannel2014">
+<p>Belloch, Jose A., Balazs Bank, Lauri Savioja, Alberto Gonzalez, and Vesa Valimaki. 2014. “Multi-Channel IIR Filtering of Audio Signals Using a GPU.” In <em>2014 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)</em>, 6692–6. Florence, Italy: IEEE. <a href="https://doi.org/10.1109/ICASSP.2014.6854895">https://doi.org/10.1109/ICASSP.2014.6854895</a>.</p>
+</div>
+<div id="ref-blellochPrefix">
+<p>Blelloch, Guy E. n.d. “Prefix Sums and Their Applications,” 26.</p>
+</div>
+<div id="ref-liuEvaluating2018">
+<p>Liu, Gabrielle K. 2018. “Evaluating Gammatone Frequency Cepstral Coefficients with Neural Networks for Emotion Recognition from Speech.” <em>arXiv:1806.09010 [Cs, Eess]</em>, June. <a href="http://arxiv.org/abs/1806.09010">http://arxiv.org/abs/1806.09010</a>.</p>
+</div>
+<div id="ref-maEfficient">
+<p>Ma, Ning. n.d.a. “An Efficient Implementation of Gammatone Filters.” https://staffwww.dcs.shef.ac.uk/people/N.Ma/resources/gammatone/.</p>
+</div>
+<div id="ref-maCochleagram">
+<p>———. n.d.b. “Cochleagram Representaion of Sound.” https://staffwww.dcs.shef.ac.uk/people/N.Ma/resources/ratemap/.</p>
+</div>
+<div id="ref-valeroGammatone2012">
+<p>Valero, X., and F. Alias. 2012. “Gammatone Cepstral Coefficients: Biologically Inspired Features for Non-Speech Audio Classification.” <em>IEEE Transactions on Multimedia</em> 14 (6): 1684–9. <a href="https://doi.org/10.1109/TMM.2012.2199972">https://doi.org/10.1109/TMM.2012.2199972</a>.</p>
+</div>
+</div>
+</body>
+</html>
